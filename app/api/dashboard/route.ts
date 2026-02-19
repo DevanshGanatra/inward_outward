@@ -125,7 +125,7 @@ export async function GET(request: Request) {
         // Needs mode names, so we fetch them first
         const modes = await prisma.inOutwardMode.findMany();
         const modeChartData = modeStats.map((stat: any) => {
-            const modeName = modes.find(m => m.InOutwardModeID === stat.InOutwardModeID)?.InOutwardModeName || "Unknown";
+            const modeName = modes.find((m: any) => m.InOutwardModeID === stat.InOutwardModeID)?.InOutwardModeName || "Unknown";
             return { name: modeName, value: stat._count.InwardID };
         });
 
@@ -145,7 +145,7 @@ export async function GET(request: Request) {
                 time: new Date(o.Created).toLocaleTimeString(),
                 status: "Sent",
             })),
-        ].sort((a, b) => b.id.localeCompare(a.id)).slice(0, 10);
+        ].sort((a: any, b: any) => b.id.localeCompare(a.id)).slice(0, 10);
 
         return NextResponse.json({
             stats: {

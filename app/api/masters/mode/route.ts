@@ -142,7 +142,7 @@ export async function DELETE(request: Request) {
         const filter = await getMasterFilter();
 
         if (idsString) {
-            const ids = idsString.split(",").map(id => parseInt(id)).filter(id => !isNaN(id));
+            const ids = idsString.split(",").map((id: string) => parseInt(id)).filter((id: number) => !isNaN(id));
 
             const oldModes = await prisma.inOutwardMode.findMany({
                 where: { InOutwardModeID: { in: ids }, ...filter }
