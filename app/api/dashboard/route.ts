@@ -1,21 +1,133 @@
 import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { prisma } from "@/lib/prisma";
+import { getServerSession, getTeamFilter } from "@/lib/auth-server";
 
-export async function GET() {
+// Force dynamic rendering - no caching
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
+export async function GET(request: Request) {
     try {
-        const [totalInward, totalOutward, recentInwards, recentOutwards, activeOffices] = await Promise.all([
-            prisma.inward.count(),
-            prisma.outward.count(),
+        const session = await getServerSession();
+
+        if (!session) {
+            return NextResponse.json(
+                { error: "Unauthorized - Please login again" },
+                {
+                    status: 401,
+                    headers: {
+                        'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+                        'Pragma': 'no-cache',
+                        'Expires': '0',
+                    }
+                }
+            );
+        }
+
+        const { searchParams } = new URL(request.url);
+        const requestedTeamId = searchParams.get("teamId") ? parseInt(searchParams.get("teamId")!) : undefined;
+
+        let teamFilter = await getTeamFilter(requestedTeamId) as any;
+
+        // Calculate date ranges for charts
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+        // groupBy does not support relation filters (like { user: { TeamID: ... } })
+        // If we have a relation filter, we need to convert it to a list of User IDs
+        let groupByFilter = { ...teamFilter } as any;
+        if (teamFilter.user && teamFilter.user.TeamID) {
+            const teamUsers = await prisma.user.findMany({
+                where: { TeamID: teamFilter.user.TeamID },
+                select: { UserID: true }
+            });
+            const userIds = teamUsers.map(u => u.UserID);
+            groupByFilter = { UserID: { in: userIds } };
+        }
+
+        const [
+            totalInward,
+            totalOutward,
+            recentInwards,
+            recentOutwards,
+            activeOffices,
+            inwardVolume,
+            outwardVolume,
+            modeStats
+        ] = await Promise.all([
+            prisma.inward.count({ where: teamFilter }),
+            prisma.outward.count({ where: teamFilter }),
             prisma.inward.findMany({
+                where: teamFilter,
                 orderBy: { InwardDate: "desc" },
                 take: 5,
             }),
             prisma.outward.findMany({
+                where: teamFilter,
                 orderBy: { OutwardDate: "desc" },
                 take: 5,
             }),
-            prisma.inwardOutwardOffice.count(),
+            prisma.inwardOutwardOffice.count(), // Offices are always global count
+
+            // Chart Data: Volume last 7 days
+            prisma.inward.groupBy({
+                by: ['InwardDate'],
+                where: {
+                    ...groupByFilter,
+                    InwardDate: { gte: sevenDaysAgo }
+                },
+                _count: { InwardID: true },
+            }),
+            prisma.outward.groupBy({
+                by: ['OutwardDate'],
+                where: {
+                    ...groupByFilter,
+                    OutwardDate: { gte: sevenDaysAgo }
+                },
+                _count: { OutwardID: true },
+            }),
+
+            // Chart Data: Mode Distribution
+            prisma.inward.groupBy({
+                by: ['InOutwardModeID'],
+                where: groupByFilter,
+                _count: { InwardID: true },
+            })
         ]);
+
+        // Process Volume Data for Recharts
+        // Create map of last 7 days
+        const volumeMap = new Map<string, { date: string, inward: number, outward: number }>();
+        for (let i = 0; i < 7; i++) {
+            const d = new Date();
+            d.setDate(d.getDate() - i);
+            const dateStr = d.toISOString().split('T')[0];
+            volumeMap.set(dateStr, { date: d.toLocaleDateString('en-US', { weekday: 'short' }), inward: 0, outward: 0 });
+        }
+
+        inwardVolume.forEach(item => {
+            const dateStr = new Date(item.InwardDate).toISOString().split('T')[0];
+            if (volumeMap.has(dateStr)) {
+                volumeMap.get(dateStr)!.inward = item._count.InwardID;
+            }
+        });
+
+        outwardVolume.forEach(item => {
+            const dateStr = new Date(item.OutwardDate).toISOString().split('T')[0];
+            if (volumeMap.has(dateStr)) {
+                volumeMap.get(dateStr)!.outward = item._count.OutwardID;
+            }
+        });
+
+        const volumeChartData = Array.from(volumeMap.values()).reverse();
+
+        // Process Mode Data
+        // Needs mode names, so we fetch them first
+        const modes = await prisma.inOutwardMode.findMany();
+        const modeChartData = modeStats.map(stat => {
+            const modeName = modes.find(m => m.InOutwardModeID === stat.InOutwardModeID)?.InOutwardModeName || "Unknown";
+            return { name: modeName, value: stat._count.InwardID };
+        });
 
         // Format recent traffic
         const recentTraffic = [
@@ -39,13 +151,32 @@ export async function GET() {
             stats: {
                 totalInward,
                 totalOutward,
-                pendingItems: 0, // Placeholder
+                pendingItems: 0,
                 activeOffices,
             },
             recentTraffic,
+            charts: {
+                volume: volumeChartData,
+                distribution: modeChartData
+            }
+        }, {
+            headers: {
+                'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+                'Pragma': 'no-cache',
+                'Expires': '0',
+            }
         });
-    } catch (error) {
+    } catch (error: any) {
         console.error("Dashboard API Error:", error);
-        return NextResponse.json({ error: "Failed to fetch dashboard data" }, { status: 500 });
+        console.error("Error details:", error?.message, error?.stack);
+        return NextResponse.json(
+            { error: "Failed to fetch dashboard data", details: error?.message },
+            {
+                status: 500,
+                headers: {
+                    'Cache-Control': 'no-store, no-cache, must-revalidate, proxy-revalidate',
+                }
+            }
+        );
     }
 }
