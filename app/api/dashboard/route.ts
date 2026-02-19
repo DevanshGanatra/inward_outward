@@ -41,7 +41,7 @@ export async function GET(request: Request) {
                 where: { TeamID: teamFilter.user.TeamID },
                 select: { UserID: true }
             });
-            const userIds = teamUsers.map(u => u.UserID);
+            const userIds = teamUsers.map((u: { UserID: number }) => u.UserID);
             groupByFilter = { UserID: { in: userIds } };
         }
 
@@ -105,14 +105,14 @@ export async function GET(request: Request) {
             volumeMap.set(dateStr, { date: d.toLocaleDateString('en-US', { weekday: 'short' }), inward: 0, outward: 0 });
         }
 
-        inwardVolume.forEach(item => {
+        inwardVolume.forEach((item: any) => {
             const dateStr = new Date(item.InwardDate).toISOString().split('T')[0];
             if (volumeMap.has(dateStr)) {
                 volumeMap.get(dateStr)!.inward = item._count.InwardID;
             }
         });
 
-        outwardVolume.forEach(item => {
+        outwardVolume.forEach((item: any) => {
             const dateStr = new Date(item.OutwardDate).toISOString().split('T')[0];
             if (volumeMap.has(dateStr)) {
                 volumeMap.get(dateStr)!.outward = item._count.OutwardID;
@@ -124,21 +124,21 @@ export async function GET(request: Request) {
         // Process Mode Data
         // Needs mode names, so we fetch them first
         const modes = await prisma.inOutwardMode.findMany();
-        const modeChartData = modeStats.map(stat => {
+        const modeChartData = modeStats.map((stat: any) => {
             const modeName = modes.find(m => m.InOutwardModeID === stat.InOutwardModeID)?.InOutwardModeName || "Unknown";
             return { name: modeName, value: stat._count.InwardID };
         });
 
         // Format recent traffic
         const recentTraffic = [
-            ...recentInwards.map((i) => ({
+            ...recentInwards.map((i: any) => ({
                 id: `in-${i.InwardID}`,
                 type: "Inward",
                 subject: i.Subject,
                 time: new Date(i.Created).toLocaleTimeString(),
                 status: "Completed",
             })),
-            ...recentOutwards.map((o) => ({
+            ...recentOutwards.map((o: any) => ({
                 id: `out-${o.OutwardID}`,
                 type: "Outward",
                 subject: o.Subject,
